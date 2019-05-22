@@ -1,10 +1,9 @@
 /// This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
 /// ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
-use std::io::{BufReader, Error, ErrorKind};
-use tokio::await;
-use tokio::io;
-use tokio::prelude::*;
+use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use std::io::{Error, ErrorKind};
+use std::marker::Unpin;
 
 pub struct Protocol<S: AsyncRead + AsyncWrite> {
     io: S,
@@ -12,9 +11,9 @@ pub struct Protocol<S: AsyncRead + AsyncWrite> {
 
 impl<S> Protocol<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
-	/// Creates the ASCII protocol on a stream.
+    /// Creates the ASCII protocol on a stream.
     pub fn new(io: S) -> Self {
         Self { io }
     }
@@ -23,14 +22,15 @@ where
     pub async fn get<'a, K: Display>(&'a mut self, key: &'a K) -> Result<Vec<u8>, Error> {
         // Send command
         let header = format!("get {}\r\n", key);
-        await!(io::write_all(&mut self.io, header.as_bytes()))?;
-        await!(io::flush(&mut self.io))?;
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.flush().await?;
 
         // Read response header
         let mut reader = BufReader::new(&mut self.io);
         let header = {
-            let (_, v) = await!(io::read_until(&mut reader, b'\n', Vec::default()))?;
-            String::from_utf8(v).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            let mut buf = vec![];
+            drop(reader.read_until(b'\n', &mut buf).await?);
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
 
         // Check response header and parse value length
@@ -50,11 +50,12 @@ where
 
         // Read value
         let mut buffer: Vec<u8> = vec![0; length];
-        drop(await!(io::read_exact(&mut reader, &mut buffer))?);
+        drop(reader.read_exact(&mut buffer).await?);
 
         // Read the trailing header
-        drop(await!(io::read_until(&mut reader, b'\n', Vec::default()))?);
-        drop(await!(io::read_until(&mut reader, b'\n', Vec::default()))?);
+        let mut buf = vec![];
+        drop(reader.read_until(b'\n', &mut buf).await?);
+        drop(reader.read_until(b'\n', &mut buf).await?);
 
         Ok(buffer)
     }
@@ -67,32 +68,99 @@ where
         expiration: u32,
     ) -> Result<(), Error> {
         let header = format!("set {} 0 {} {} noreply\r\n", key, expiration, val.len());
-        await!(io::write_all(&mut self.io, header.as_bytes()))?;
-        await!(io::write_all(&mut self.io, val))?;
-        await!(io::write_all(&mut self.io, b"\r\n"))?;
-        await!(io::flush(&mut self.io))?;
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tokio::await;
-    use tokio::net::UnixStream;
+    use futures::executor::block_on;
+    use futures::io::{AsyncRead, AsyncWrite};
+    use std::io::{Cursor, Error, ErrorKind, Read, Write};
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
-    #[test]
-    fn test_ascii() {
-        tokio::run_async(
-            async move {
-                let sock = await!(UnixStream::connect("/tmp/memcached.sock")).expect("connected socket");
-                let mut ascii = Protocol::new(sock);
-
-                await!(ascii.set(&"ascii_foo", b"bar", 0)).expect("set works");
-                let value = await!(ascii.get(&"ascii_foo")).expect("get works");
-                assert_eq!(value, b"bar".to_vec());
-            },
-        );
+    struct Cache {
+        r: Cursor<Vec<u8>>,
+        w: Cursor<Vec<u8>>,
     }
 
+    impl Cache {
+        fn new() -> Self {
+            Cache {
+                r: Cursor::new(Vec::new()),
+                w: Cursor::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AsyncRead for Cache {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut Context,
+            buf: &mut [u8],
+        ) -> Poll<Result<usize, Error>> {
+            Poll::Ready(self.get_mut().r.read(buf))
+        }
+    }
+
+    impl AsyncWrite for Cache {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context,
+            buf: &[u8],
+        ) -> Poll<Result<usize, Error>> {
+            Poll::Ready(self.get_mut().w.write(buf))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
+            Poll::Ready(self.get_mut().w.flush())
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[test]
+    fn test_ascii_get() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE foo 0 3\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_empty() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"END\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(
+            block_on(ascii.get(&"foo")).unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_set() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.set(&key, val.as_bytes(), ttl)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("set {} 0 {} {} noreply\r\n{}\r\n", key, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
 }
