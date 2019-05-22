@@ -17,9 +17,12 @@ fn main() {
 
     let f = async || {
         let (key, val) = ("foo", "bar");
-
         let stream = TcpStream::connect(addr).expect("Failed to create stream");
 
+        // "futures::io::AllowStdIo" is used here to make the stream
+        // work with AsyncIO. This shouldn't be used in production
+        // since it will block current thread. Use something like
+        // romio or tokio instead.
         let mut cache = Protocol::new(AllowStdIo::new(stream));
         cache
             .set(&key, val.as_bytes(), 0)

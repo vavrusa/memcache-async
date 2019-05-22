@@ -14,7 +14,7 @@ The crate is called `memcache-async` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-memcache-async = "*"
+memcache-async = "0.2.0"
 ```
 
 ## Features
@@ -34,25 +34,10 @@ The crate implements the protocol on any stream implementing `AsyncRead + AsyncW
 
 ## Basic usage
 
-The crate works with byte slices for values, the caller should implement deserialization if desired.
+The crate works with byte slices for values, the caller should implement deserialization if desired. See [examples](examples/) for usage. E.g. after start a memcached instance locally, the following example code could be run:
 
-```rust
-use tokio::prelude::*;
-use tokio::await;
-use tokio::net::UnixStream;
-use memcache_async::ascii;
-
-tokio::run_async(async move {
-	let sock = await!(UnixStream::connect("memcache.sock")).expect("connected socket");
-	let mut ascii = ascii::Protocol::new(sock);
-
-	// set a value
-	await!(ascii.set(&"foo", b"bar", 0)).expect("set works");
-
-	// retrieve 
-	let value = await!(ascii.get(&"foo")).expect("get works");
-	assert_eq!(value, b"bar".to_vec());
-});
+```bash
+cargo run --example tcp-simple 127.0.0.1:11211
 ```
 
 ## License
