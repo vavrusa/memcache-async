@@ -1,6 +1,6 @@
 [package]
 name = "memcache-async"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Marek Vavruša <marek@vavrusa.com>"]
 edition = "2018"
 readme = "README.md"
@@ -10,4 +10,3 @@ keywords = ["memcache", "memcached", "cache", "database", "async"]
 
 [dependencies]
 futures-preview = { version = "0.3.0-alpha.16", features = ["compat"] }
-tokio = "0.1"

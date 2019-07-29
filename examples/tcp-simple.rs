@@ -15,7 +15,7 @@ fn main() {
 
     let addr = &args[1];
 
-    let f = async || {
+    block_on(async move {
         let (key, val) = ("foo", "bar");
         let stream = TcpStream::connect(addr).expect("Failed to create stream");
 
@@ -31,7 +31,5 @@ fn main() {
 
         let v = cache.get(&key).await.expect("Failed to get key");
         assert_eq!(v, val.as_bytes());
-    };
-
-    block_on(f());
+    });
 }
