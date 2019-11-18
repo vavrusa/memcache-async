@@ -1,6 +1,6 @@
 [package]
 name = "memcache-async"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Marek Vavruša <marek@vavrusa.com>"]
 edition = "2018"
 readme = "README.md"
@@ -9,8 +9,4 @@ description = "A no-frills async memcached client for Rust."
 keywords = ["memcache", "memcached", "cache", "database", "async"]
 
 [dependencies]
-futures-preview = { version = "0.3.0-alpha.16", features = ["compat"] }
-
-[dev-dependencies]
-futures-preview = { version = "0.3.0-alpha.16", features = ["compat", "io-compat"] }
-tokio = "0.1"
+futures = { version = "0.3" }
