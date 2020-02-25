@@ -2,6 +2,7 @@
 /// ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
 
@@ -58,6 +59,57 @@ where
         drop(reader.read_until(b'\n', &mut buf).await?);
 
         Ok(buffer)
+    }
+
+    /// Returns values for multiple keys in a single call as a `HashMap` from keys to found values.
+    /// If a key is not present in memcached it will be absent from returned map.
+    pub async fn get_multi<'a, K: AsRef<[u8]>>(
+        &'a mut self,
+        keys: &'a Vec<K>,
+    ) -> Result<HashMap<String, Vec<u8>>, Error> {
+        // Send command
+        self.io.write_all("GET".as_bytes()).await?;
+        for k in keys {
+            self.io.write(b" ").await?;
+            self.io.write_all(k.as_ref()).await?;
+        }
+        self.io.write(b"\r\n").await?;
+        self.io.flush().await?;
+
+        // Read response header
+        let mut reader = BufReader::new(&mut self.io);
+        let mut map = HashMap::new();
+        loop {
+            let header = {
+                let mut buf = vec![];
+                drop(reader.read_until(b'\n', &mut buf).await?);
+                String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            };
+            let mut parts = header.split(' ');
+            match parts.next() {
+                Some("VALUE") => {
+                    if let (Some(key), _ /*flags*/, Some(size_str)) =
+                        (parts.next(), parts.next(), parts.next())
+                    {
+                        let size: usize = size_str
+                            .trim_end()
+                            .parse()
+                            .map_err(|_| Error::from(ErrorKind::InvalidInput))?;
+                        let mut buffer: Vec<u8> = vec![0; size];
+                        drop(reader.read_exact(&mut buffer).await?);
+                        let mut crlf = vec![0; 2];
+                        drop(reader.read_exact(&mut crlf).await?);
+
+                        map.insert(key.to_owned(), buffer);
+                    } else {
+                        return Err(Error::new(ErrorKind::InvalidData, header));
+                    }
+                }
+                Some("END\r\n") => return Ok(map),
+                Some("ERROR") => return Err(Error::new(ErrorKind::Other, header)),
+                _ => return Err(Error::new(ErrorKind::InvalidData, header)),
+            }
+        }
     }
 
     /// Set key to given value and don't wait for response.
@@ -148,6 +200,48 @@ mod tests {
             ErrorKind::NotFound
         );
         assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_one() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE foo 0 3\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let keys = vec!["foo"];
+        let map = block_on(ascii.get_multi(&keys)).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("foo").unwrap(), b"bar");
+        assert_eq!(cache.w.get_ref(), b"GET foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_many() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE foo 0 3\r\nbar\r\nVALUE baz 44 4\r\ncrux\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let keys = vec!["foo", "baz", "blah"];
+        let map = block_on(ascii.get_multi(&keys)).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("foo").unwrap(), b"bar");
+        assert_eq!(map.get("baz").unwrap(), b"crux");
+        assert_eq!(cache.w.get_ref(), b"GET foo baz blah\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_multi_empty() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"END\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let keys = vec!["foo", "baz"];
+        let map = block_on(ascii.get_multi(&keys)).unwrap();
+        assert!(map.is_empty());
+        assert_eq!(cache.w.get_ref(), b"GET foo baz\r\n");
     }
 
     #[test]
