@@ -68,7 +68,7 @@ where
         keys: &'a Vec<K>,
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
-        self.io.write_all("GET".as_bytes()).await?;
+        self.io.write_all("get".as_bytes()).await?;
         for k in keys {
             self.io.write(b" ").await?;
             self.io.write_all(k.as_ref()).await?;
@@ -214,7 +214,7 @@ mod tests {
         let map = block_on(ascii.get_multi(&keys)).unwrap();
         assert_eq!(map.len(), 1);
         assert_eq!(map.get("foo").unwrap(), b"bar");
-        assert_eq!(cache.w.get_ref(), b"GET foo\r\n");
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert_eq!(map.get("foo").unwrap(), b"bar");
         assert_eq!(map.get("baz").unwrap(), b"crux");
-        assert_eq!(cache.w.get_ref(), b"GET foo baz blah\r\n");
+        assert_eq!(cache.w.get_ref(), b"get foo baz blah\r\n");
     }
 
     #[test]
@@ -241,7 +241,7 @@ mod tests {
         let keys = vec!["foo", "baz"];
         let map = block_on(ascii.get_multi(&keys)).unwrap();
         assert!(map.is_empty());
-        assert_eq!(cache.w.get_ref(), b"GET foo baz\r\n");
+        assert_eq!(cache.w.get_ref(), b"get foo baz\r\n");
     }
 
     #[test]
