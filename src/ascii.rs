@@ -147,6 +147,25 @@ where
         let version = response.trim_start_matches("VERSION ").trim_end();
         Ok(version.to_string())
     }
+
+    pub async fn flush(&mut self) -> Result<(), Error> {
+        self.io.write_all(b"flush_all\r\n").await?;
+        self.io.flush().await?;
+
+        // Read response header
+        let mut reader = BufReader::new(&mut self.io);
+        let response = {
+            let mut buf = vec![];
+            drop(reader.read_until(b'\n', &mut buf).await?);
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+        };
+
+        if response == "OK\r\n" {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Other, response))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,5 +308,17 @@ mod tests {
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(block_on(ascii.version()).unwrap(), "1.6.6");
         assert_eq!(cache.w.get_ref(), b"version\r\n");
+    }
+
+    #[test]
+    fn test_ascii_flush() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"OK\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert!(block_on(ascii.flush()).is_ok());
+        assert_eq!(cache.w.get_ref(), b"flush_all\r\n");
     }
 }
