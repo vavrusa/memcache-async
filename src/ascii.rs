@@ -127,6 +127,17 @@ where
         Ok(())
     }
 
+    /// Delete a key and don't wait for response.
+    pub async fn delete<'a, K: Display>(
+        &'a mut self,
+        key: &'a K,
+    ) -> Result<(), Error> {
+        let header = format!("delete {} noreply\r\n", key);
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.flush().await?;
+        Ok(())
+    }
+
     pub async fn version(
         &mut self
     ) -> Result<String, Error> {
