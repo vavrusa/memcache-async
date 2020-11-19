@@ -112,6 +112,38 @@ where
         }
     }
 
+    /// Add a key. If the value exist, `std::io::ErrorKind::AllreadyExists` is returned.
+    pub async fn add<'a, K: Display>(
+        &'a mut self,
+        key: &'a K,
+        val: &'a [u8],
+        expiration: u32,
+    ) -> Result<(), Error> {        
+        // Send command
+        let header = format!("add {} 0 {} {} noreply\r\n", key, expiration, val.len());
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
+
+        // Read response header
+        let mut reader = BufReader::new(&mut self.io);
+        let header = {
+            let mut buf = vec![];
+            drop(reader.read_until(b'\n', &mut buf).await?);
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+        };
+
+        // Check response header and parse value length
+        if header.contains("ERROR") {
+            return Err(Error::new(ErrorKind::Other, header));
+        } else if header.starts_with("NOT_STORED") {
+            return Err(ErrorKind::AlreadyExists.into());
+        }
+
+        Ok(())
+    }
+
     /// Set key to given value and don't wait for response.
     pub async fn set<'a, K: Display>(
         &'a mut self,
