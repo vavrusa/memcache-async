@@ -120,7 +120,7 @@ where
         expiration: u32,
     ) -> Result<(), Error> {        
         // Send command
-        let header = format!("add {} 0 {} {} noreply\r\n", key, expiration, val.len());
+        let header = format!("add {} 0 {} {}\r\n", key, expiration, val.len());
         self.io.write_all(header.as_bytes()).await?;
         self.io.write_all(val).await?;
         self.io.write_all(b"\r\n").await?;
@@ -133,7 +133,7 @@ where
             drop(reader.read_until(b'\n', &mut buf).await?);
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
-
+        
         // Check response header and parse value length
         if header.contains("ERROR") {
             return Err(Error::new(ErrorKind::Other, header));
