@@ -7,6 +7,9 @@ readme = "README.md"
 license = "MIT"
 description = "A no-frills async memcached client for Rust."
 keywords = ["memcache", "memcached", "cache", "database", "async"]
+repository = "https://github.com/vavrusa/memcache-async"
+documentation = "https://docs.rs/memcache-async"
+homepage = "https://github.com/vavrusa/memcache-async"
 
 [dependencies]
 futures = { version = "0.3" }

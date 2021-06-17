@@ -14,7 +14,7 @@ The crate is called `memcache-async` and you can depend on it via cargo:
 
 ```ini
 [dependencies]
-memcache-async = "0.2.0"
+memcache-async = "0.5"
 ```
 
 ## Features
