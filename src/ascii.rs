@@ -30,7 +30,7 @@ where
         let mut reader = BufReader::new(&mut self.io);
         let header = {
             let mut buf = vec![];
-            drop(reader.read_until(b'\n', &mut buf).await?);
+            reader.read_until(b'\n', &mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
 
@@ -51,12 +51,12 @@ where
 
         // Read value
         let mut buffer: Vec<u8> = vec![0; length];
-        drop(reader.read_exact(&mut buffer).await?);
+        reader.read_exact(&mut buffer).await?;
 
         // Read the trailing header
         let mut buf = vec![];
-        drop(reader.read_until(b'\n', &mut buf).await?);
-        drop(reader.read_until(b'\n', &mut buf).await?);
+        reader.read_until(b'\n', &mut buf).await?;
+        reader.read_until(b'\n', &mut buf).await?;
 
         Ok(buffer)
     }
@@ -65,7 +65,7 @@ where
     /// If a key is not present in memcached it will be absent from returned map.
     pub async fn get_multi<'a, K: AsRef<[u8]>>(
         &'a mut self,
-        keys: &'a Vec<K>,
+        keys: &'a [K],
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
         self.io.write_all("get".as_bytes()).await?;
@@ -86,7 +86,7 @@ where
         loop {
             let header = {
                 let mut buf = vec![];
-                drop(reader.read_until(b'\n', &mut buf).await?);
+                reader.read_until(b'\n', &mut buf).await?;
                 String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
             };
             let mut parts = header.split(' ');
@@ -100,9 +100,9 @@ where
                             .parse()
                             .map_err(|_| Error::from(ErrorKind::InvalidInput))?;
                         let mut buffer: Vec<u8> = vec![0; size];
-                        drop(reader.read_exact(&mut buffer).await?);
+                        reader.read_exact(&mut buffer).await?;
                         let mut crlf = vec![0; 2];
-                        drop(reader.read_exact(&mut crlf).await?);
+                        reader.read_exact(&mut crlf).await?;
 
                         map.insert(key.to_owned(), buffer);
                     } else {
@@ -154,7 +154,7 @@ where
         let mut reader = BufReader::new(&mut self.io);
         let header = {
             let mut buf = vec![];
-            drop(reader.read_until(b'\n', &mut buf).await?);
+            reader.read_until(b'\n', &mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
 
@@ -199,7 +199,7 @@ where
         let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            drop(reader.read_until(b'\n', &mut buf).await?);
+            reader.read_until(b'\n', &mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
 
@@ -218,7 +218,7 @@ where
         let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            drop(reader.read_until(b'\n', &mut buf).await?);
+            reader.read_until(b'\n', &mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
 
