@@ -77,6 +77,10 @@ where
         self.io.flush().await?;
 
         // Read response header
+        self.read_many_values().await
+    }
+
+    async fn read_many_values(&mut self) -> Result<HashMap<String, Vec<u8>>, Error> {
         let mut reader = BufReader::new(&mut self.io);
         let mut map = HashMap::new();
         loop {
@@ -88,7 +92,7 @@ where
             let mut parts = header.split(' ');
             match parts.next() {
                 Some("VALUE") => {
-                    if let (Some(key), _ /*flags*/, Some(size_str)) =
+                    if let (Some(key), _flags, Some(size_str)) =
                         (parts.next(), parts.next(), parts.next())
                     {
                         let size: usize = size_str
@@ -112,13 +116,33 @@ where
         }
     }
 
+    /// Get up to `limit` keys which match the given prefix. Returns a HashMap from keys to found values.
+    /// This is not part of the Memcached standard, but some servers implement it nonetheless.
+    pub async fn get_prefix<'a, K: Display>(
+        &'a mut self,
+        key_prefix: &'a K,
+        limit: Option<usize>,
+    ) -> Result<HashMap<String, Vec<u8>>, Error> {
+        // Send command
+        let header = if let Some(limit) = limit {
+            format!("get_prefix {} {}\r\n", key_prefix, limit)
+        } else {
+            format!("get_prefix {}\r\n", key_prefix)
+        };
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.flush().await?;
+
+        // Read response header
+        self.read_many_values().await
+    }
+
     /// Add a key. If the value exist, `std::io::ErrorKind::AllreadyExists` is returned.
     pub async fn add<'a, K: Display>(
         &'a mut self,
         key: &'a K,
         val: &'a [u8],
         expiration: u32,
-    ) -> Result<(), Error> {        
+    ) -> Result<(), Error> {
         // Send command
         let header = format!("add {} 0 {} {}\r\n", key, expiration, val.len());
         self.io.write_all(header.as_bytes()).await?;
@@ -133,7 +157,7 @@ where
             drop(reader.read_until(b'\n', &mut buf).await?);
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
         };
-        
+
         // Check response header and parse value length
         if header.contains("ERROR") {
             return Err(Error::new(ErrorKind::Other, header));
@@ -160,19 +184,14 @@ where
     }
 
     /// Delete a key and don't wait for response.
-    pub async fn delete<'a, K: Display>(
-        &'a mut self,
-        key: &'a K,
-    ) -> Result<(), Error> {
+    pub async fn delete<'a, K: Display>(&'a mut self, key: &'a K) -> Result<(), Error> {
         let header = format!("delete {} noreply\r\n", key);
         self.io.write_all(header.as_bytes()).await?;
         self.io.flush().await?;
         Ok(())
     }
 
-    pub async fn version(
-        &mut self
-    ) -> Result<String, Error> {
+    pub async fn version(&mut self) -> Result<String, Error> {
         self.io.write_all(b"version\r\n").await?;
         self.io.flush().await?;
 
@@ -317,6 +336,22 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_get_prefix() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE key 0 3\r\nbar\r\nVALUE kez 44 4\r\ncrux\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let key_prefix = "ke";
+        let map = block_on(ascii.get_prefix(&key_prefix, None)).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("key").unwrap(), b"bar");
+        assert_eq!(map.get("kez").unwrap(), b"crux");
+        assert_eq!(cache.w.get_ref(), b"get_prefix ke\r\n");
+    }
+
+    #[test]
     fn test_ascii_get_multi_empty() {
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"END\r\n");
@@ -344,10 +379,7 @@ mod tests {
     #[test]
     fn test_ascii_version() {
         let mut cache = Cache::new();
-        cache
-            .r
-            .get_mut()
-            .extend_from_slice(b"VERSION 1.6.6\r\n");
+        cache.r.get_mut().extend_from_slice(b"VERSION 1.6.6\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(block_on(ascii.version()).unwrap(), "1.6.6");
         assert_eq!(cache.w.get_ref(), b"version\r\n");
@@ -356,10 +388,7 @@ mod tests {
     #[test]
     fn test_ascii_flush() {
         let mut cache = Cache::new();
-        cache
-            .r
-            .get_mut()
-            .extend_from_slice(b"OK\r\n");
+        cache.r.get_mut().extend_from_slice(b"OK\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
         assert!(block_on(ascii.flush()).is_ok());
         assert_eq!(cache.w.get_ref(), b"flush_all\r\n");
