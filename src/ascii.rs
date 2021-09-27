@@ -31,7 +31,7 @@ where
         let header = {
             let mut buf = vec![];
             reader.read_until(b'\n', &mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
         // Check response header and parse value length
@@ -45,8 +45,8 @@ where
         let length: usize = match length_str {
             Some(x) => x
                 .parse()
-                .map_err(|_| Error::from(ErrorKind::InvalidInput))?,
-            None => return Err(ErrorKind::InvalidInput.into()),
+                .map_err(|_| Error::from(ErrorKind::InvalidData))?,
+            None => return Err(ErrorKind::InvalidData.into()),
         };
 
         // Read value
@@ -87,7 +87,7 @@ where
             let header = {
                 let mut buf = vec![];
                 reader.read_until(b'\n', &mut buf).await?;
-                String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+                String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
             };
             let mut parts = header.split(' ');
             match parts.next() {
@@ -98,7 +98,7 @@ where
                         let size: usize = size_str
                             .trim_end()
                             .parse()
-                            .map_err(|_| Error::from(ErrorKind::InvalidInput))?;
+                            .map_err(|_| Error::from(ErrorKind::InvalidData))?;
                         let mut buffer: Vec<u8> = vec![0; size];
                         reader.read_exact(&mut buffer).await?;
                         let mut crlf = vec![0; 2];
@@ -155,7 +155,7 @@ where
         let header = {
             let mut buf = vec![];
             reader.read_until(b'\n', &mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
         // Check response header and parse value length
@@ -200,7 +200,7 @@ where
         let response = {
             let mut buf = vec![];
             reader.read_until(b'\n', &mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
         if !response.starts_with("VERSION") {
@@ -219,7 +219,7 @@ where
         let response = {
             let mut buf = vec![];
             reader.read_until(b'\n', &mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidInput))?
+            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
         if response == "OK\r\n" {
