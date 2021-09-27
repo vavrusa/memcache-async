@@ -7,7 +7,7 @@ use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
 
 pub struct Protocol<S: AsyncRead + AsyncWrite> {
-    io: S,
+    io: BufReader<S>,
 }
 
 impl<S> Protocol<S>
@@ -16,23 +16,20 @@ where
 {
     /// Creates the ASCII protocol on a stream.
     pub fn new(io: S) -> Self {
-        Self { io }
+        Self { io: BufReader::new(io) }
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, `std::io::ErrorKind::NotFound` is returned.
     pub async fn get<'a, K: Display>(&'a mut self, key: &'a K) -> Result<Vec<u8>, Error> {
         // Send command
         let header = format!("get {}\r\n", key);
-        self.io.write_all(header.as_bytes()).await?;
-        self.io.flush().await?;
+        self.io.get_mut().write_all(header.as_bytes()).await?;
+        self.io.get_mut().flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
-        let header = {
-            let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
-        };
+        let mut buf = vec![];
+        self.io.read_until(b'\n', &mut buf).await?;
+        let header = String::from_utf8(buf).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
         if header.contains("ERROR") {
@@ -51,12 +48,12 @@ where
 
         // Read value
         let mut buffer: Vec<u8> = vec![0; length];
-        reader.read_exact(&mut buffer).await?;
+        self.io.read_exact(&mut buffer).await?;
 
         // Read the trailing header
         let mut buf = vec![];
-        reader.read_until(b'\n', &mut buf).await?;
-        reader.read_until(b'\n', &mut buf).await?;
+        self.io.read_until(b'\n', &mut buf).await?; // \r\n
+        self.io.read_until(b'\n', &mut buf).await?; // END\r\n
 
         Ok(buffer)
     }
@@ -68,13 +65,14 @@ where
         keys: &'a [K],
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
-        self.io.write_all("get".as_bytes()).await?;
+        let writer = self.io.get_mut();
+        writer.write_all("get".as_bytes()).await?;
         for k in keys {
-            self.io.write(b" ").await?;
-            self.io.write_all(k.as_ref()).await?;
+            writer.write(b" ").await?;
+            writer.write_all(k.as_ref()).await?;
         }
-        self.io.write(b"\r\n").await?;
-        self.io.flush().await?;
+        writer.write(b"\r\n").await?;
+        writer.flush().await?;
 
         // Read response header
         self.read_many_values().await
