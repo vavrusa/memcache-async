@@ -38,13 +38,10 @@ where
             return Err(ErrorKind::NotFound.into());
         }
 
-        let length_str = header.trim_end().rsplitn(2, ' ').next();
-        let length: usize = match length_str {
-            Some(x) => x
-                .parse()
-                .map_err(|_| Error::from(ErrorKind::InvalidData))?,
-            None => return Err(ErrorKind::InvalidData.into()),
-        };
+        // VALUE <key> <flags> <bytes> [<cas unique>]\r\n
+        let length: usize = header.split(' ').nth(3)
+            .and_then(|len| len.trim_end().parse().ok())
+            .ok_or(ErrorKind::InvalidData)?;
 
         // Read value
         let mut buffer: Vec<u8> = vec![0; length];
@@ -285,6 +282,30 @@ mod tests {
             .r
             .get_mut()
             .extend_from_slice(b"VALUE foo 0 3\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get2() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE foo 0 3\r\nbar\r\nEND\r\nVALUE bar 0 3\r\nbaz\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
+        assert_eq!(block_on(ascii.get(&"bar")).unwrap(), b"baz");
+    }
+
+    #[test]
+    fn test_ascii_get_cas() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE foo 0 3 99999\r\nbar\r\nEND\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
         assert_eq!(cache.w.get_ref(), b"get foo\r\n");
