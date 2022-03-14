@@ -1,5 +1,5 @@
-/// This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
-/// ported for AsyncRead + AsyncWrite.
+//! This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
+//! ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ where
         Self { io: BufReader::new(io) }
     }
 
-    /// Returns the value for given key as bytes. If the value doesn't exist, `std::io::ErrorKind::NotFound` is returned.
+    /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
     pub async fn get<'a, K: Display>(&'a mut self, key: &'a K) -> Result<Vec<u8>, Error> {
         // Send command
         let header = format!("get {}\r\n", key);
@@ -55,7 +55,7 @@ where
         Ok(buffer)
     }
 
-    /// Returns values for multiple keys in a single call as a `HashMap` from keys to found values.
+    /// Returns values for multiple keys in a single call as a [`HashMap`] from keys to found values.
     /// If a key is not present in memcached it will be absent from returned map.
     pub async fn get_multi<'a, K: AsRef<[u8]>>(
         &'a mut self,
@@ -111,7 +111,7 @@ where
         }
     }
 
-    /// Get up to `limit` keys which match the given prefix. Returns a HashMap from keys to found values.
+    /// Get up to `limit` keys which match the given prefix. Returns a [HashMap] from keys to found values.
     /// This is not part of the Memcached standard, but some servers implement it nonetheless.
     pub async fn get_prefix<'a, K: Display>(
         &'a mut self,
@@ -131,7 +131,7 @@ where
         self.read_many_values().await
     }
 
-    /// Add a key. If the value exist, `std::io::ErrorKind::AllreadyExists` is returned.
+    /// Add a key. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
     pub async fn add<'a, K: Display>(
         &'a mut self,
         key: &'a K,
@@ -186,6 +186,7 @@ where
         Ok(())
     }
 
+    /// Return the version of the remote server.
     pub async fn version(&mut self) -> Result<String, Error> {
         self.io.write_all(b"version\r\n").await?;
         self.io.flush().await?;
@@ -205,6 +206,7 @@ where
         Ok(version.to_string())
     }
 
+    /// Delete all keys from the cache.
     pub async fn flush(&mut self) -> Result<(), Error> {
         self.io.write_all(b"flush_all\r\n").await?;
         self.io.flush().await?;
