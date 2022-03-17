@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
 
-pub struct Protocol<S: AsyncRead + AsyncWrite> {
+pub struct Protocol<S> {
     io: BufReader<S>,
 }
 
