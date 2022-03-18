@@ -20,7 +20,7 @@ where
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
-    pub async fn get<'a, K: Display>(&'a mut self, key: &'a K) -> Result<Vec<u8>, Error> {
+    pub async fn get<K: Display>(&mut self, key: &K) -> Result<Vec<u8>, Error> {
         // Send command
         let header = format!("get {}\r\n", key);
         self.io.get_mut().write_all(header.as_bytes()).await?;
@@ -57,9 +57,9 @@ where
 
     /// Returns values for multiple keys in a single call as a [`HashMap`] from keys to found values.
     /// If a key is not present in memcached it will be absent from returned map.
-    pub async fn get_multi<'a, K: AsRef<[u8]>>(
-        &'a mut self,
-        keys: &'a [K],
+    pub async fn get_multi<K: AsRef<[u8]>>(
+        &mut self,
+        keys: &[K],
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
         let writer = self.io.get_mut();
@@ -113,9 +113,9 @@ where
 
     /// Get up to `limit` keys which match the given prefix. Returns a [HashMap] from keys to found values.
     /// This is not part of the Memcached standard, but some servers implement it nonetheless.
-    pub async fn get_prefix<'a, K: Display>(
-        &'a mut self,
-        key_prefix: &'a K,
+    pub async fn get_prefix<K: Display>(
+        &mut self,
+        key_prefix: &K,
         limit: Option<usize>,
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
@@ -132,10 +132,10 @@ where
     }
 
     /// Add a key. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
-    pub async fn add<'a, K: Display>(
-        &'a mut self,
-        key: &'a K,
-        val: &'a [u8],
+    pub async fn add<K: Display>(
+        &mut self,
+        key: &K,
+        val: &[u8],
         expiration: u32,
     ) -> Result<(), Error> {
         // Send command
@@ -164,10 +164,10 @@ where
     }
 
     /// Set key to given value and don't wait for response.
-    pub async fn set<'a, K: Display>(
-        &'a mut self,
-        key: &'a K,
-        val: &'a [u8],
+    pub async fn set<K: Display>(
+        &mut self,
+        key: &K,
+        val: &[u8],
         expiration: u32,
     ) -> Result<(), Error> {
         let header = format!("set {} 0 {} {} noreply\r\n", key, expiration, val.len());
@@ -179,7 +179,7 @@ where
     }
 
     /// Delete a key and don't wait for response.
-    pub async fn delete<'a, K: Display>(&'a mut self, key: &'a K) -> Result<(), Error> {
+    pub async fn delete<K: Display>(&mut self, key: &K) -> Result<(), Error> {
         let header = format!("delete {} noreply\r\n", key);
         self.io.write_all(header.as_bytes()).await?;
         self.io.flush().await?;
