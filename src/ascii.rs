@@ -20,7 +20,7 @@ where
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
-    pub async fn get<K: Display>(&mut self, key: &K) -> Result<Vec<u8>, Error> {
+    pub async fn get<K: Display>(&mut self, key: K) -> Result<Vec<u8>, Error> {
         // Send command
         let header = format!("get {}\r\n", key);
         self.io.get_mut().write_all(header.as_bytes()).await?;
@@ -115,7 +115,7 @@ where
     /// This is not part of the Memcached standard, but some servers implement it nonetheless.
     pub async fn get_prefix<K: Display>(
         &mut self,
-        key_prefix: &K,
+        key_prefix: K,
         limit: Option<usize>,
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
         // Send command
@@ -134,7 +134,7 @@ where
     /// Add a key. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
     pub async fn add<K: Display>(
         &mut self,
-        key: &K,
+        key: K,
         val: &[u8],
         expiration: u32,
     ) -> Result<(), Error> {
@@ -166,7 +166,7 @@ where
     /// Set key to given value and don't wait for response.
     pub async fn set<K: Display>(
         &mut self,
-        key: &K,
+        key: K,
         val: &[u8],
         expiration: u32,
     ) -> Result<(), Error> {
@@ -179,7 +179,7 @@ where
     }
 
     /// Delete a key and don't wait for response.
-    pub async fn delete<K: Display>(&mut self, key: &K) -> Result<(), Error> {
+    pub async fn delete<K: Display>(&mut self, key: K) -> Result<(), Error> {
         let header = format!("delete {} noreply\r\n", key);
         self.io.write_all(header.as_bytes()).await?;
         self.io.flush().await?;
