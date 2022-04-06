@@ -61,6 +61,10 @@ where
         &mut self,
         keys: &[K],
     ) -> Result<HashMap<String, Vec<u8>>, Error> {
+        if keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
         // Send command
         let writer = self.io.get_mut();
         writer.write_all("get".as_bytes()).await?;
@@ -381,6 +385,16 @@ mod tests {
         let map = block_on(ascii.get_multi(&keys)).unwrap();
         assert!(map.is_empty());
         assert_eq!(cache.w.get_ref(), b"get foo baz\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_multi_zero_keys() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"END\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let map = block_on(ascii.get_multi::<&str>(&[])).unwrap();
+        assert!(map.is_empty());
+        assert_eq!(cache.w.get_ref(), b"");
     }
 
     #[test]
