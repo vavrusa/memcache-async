@@ -432,6 +432,35 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_add_new_key() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"STORED\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.add(&key, val.as_bytes(), ttl)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("add {} 0 {} {}\r\n{}\r\n", key, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_add_duplicate() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"NOT_STORED\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(
+            block_on(ascii.add(&key, val.as_bytes(), ttl))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::AlreadyExists
+        );
+    }
+
+    #[test]
     fn test_ascii_version() {
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"VERSION 1.6.6\r\n");
