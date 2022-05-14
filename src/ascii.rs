@@ -16,7 +16,9 @@ where
 {
     /// Creates the ASCII protocol on a stream.
     pub fn new(io: S) -> Self {
-        Self { io: BufReader::new(io) }
+        Self {
+            io: BufReader::new(io),
+        }
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
@@ -39,7 +41,9 @@ where
         }
 
         // VALUE <key> <flags> <bytes> [<cas unique>]\r\n
-        let length: usize = header.split(' ').nth(3)
+        let length: usize = header
+            .split(' ')
+            .nth(3)
             .and_then(|len| len.trim_end().parse().ok())
             .ok_or(ErrorKind::InvalidData)?;
 
@@ -69,10 +73,10 @@ where
         let writer = self.io.get_mut();
         writer.write_all("get".as_bytes()).await?;
         for k in keys {
-            writer.write(b" ").await?;
+            writer.write_all(b" ").await?;
             writer.write_all(k.as_ref()).await?;
         }
-        writer.write(b"\r\n").await?;
+        writer.write_all(b"\r\n").await?;
         writer.flush().await?;
 
         // Read response header
