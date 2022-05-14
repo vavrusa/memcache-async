@@ -28,7 +28,7 @@ where
 
         // Read response header
         let mut buf = vec![];
-        self.io.read_until(b'\n', &mut buf).await?;
+        self.read_line(&mut buf).await?;
         let header = String::from_utf8(buf).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
@@ -49,8 +49,8 @@ where
 
         // Read the trailing header
         let mut buf = vec![];
-        self.io.read_until(b'\n', &mut buf).await?; // \r\n
-        self.io.read_until(b'\n', &mut buf).await?; // END\r\n
+        self.read_line(&mut buf).await?; // \r\n
+        self.read_line(&mut buf).await?; // END\r\n
 
         Ok(buffer)
     }
@@ -80,12 +80,11 @@ where
     }
 
     async fn read_many_values(&mut self) -> Result<HashMap<String, Vec<u8>>, Error> {
-        let mut reader = BufReader::new(&mut self.io);
         let mut map = HashMap::new();
         loop {
             let header = {
                 let mut buf = vec![];
-                reader.read_until(b'\n', &mut buf).await?;
+                self.read_line(&mut buf).await?;
                 String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
             };
             let mut parts = header.split(' ');
@@ -99,9 +98,9 @@ where
                             .parse()
                             .map_err(|_| Error::from(ErrorKind::InvalidData))?;
                         let mut buffer: Vec<u8> = vec![0; size];
-                        reader.read_exact(&mut buffer).await?;
+                        self.io.read_exact(&mut buffer).await?;
                         let mut crlf = vec![0; 2];
-                        reader.read_exact(&mut crlf).await?;
+                        self.io.read_exact(&mut crlf).await?;
 
                         map.insert(key.to_owned(), buffer);
                     } else {
@@ -150,10 +149,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let header = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -196,10 +194,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -216,10 +213,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -228,6 +224,14 @@ where
         } else {
             Err(Error::new(ErrorKind::Other, response))
         }
+    }
+
+    async fn read_line(&mut self, buf: &mut Vec<u8>) -> Result<(), Error> {
+        self.io.read_until(b'\n', buf).await?;
+        if buf.last().map(|b| *b != b'\n').unwrap_or(true) {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        Ok(())
     }
 }
 
@@ -325,6 +329,18 @@ mod tests {
         assert_eq!(
             block_on(ascii.get(&"foo")).unwrap_err().kind(),
             ErrorKind::NotFound
+        );
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
+    fn test_ascii_get_eof_error() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"EN");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(
+            block_on(ascii.get(&"foo")).unwrap_err().kind(),
+            ErrorKind::UnexpectedEof
         );
         assert_eq!(cache.w.get_ref(), b"get foo\r\n");
     }
