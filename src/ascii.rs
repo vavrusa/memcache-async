@@ -232,7 +232,7 @@ where
 
     async fn read_line(&mut self, buf: &mut Vec<u8>) -> Result<(), Error> {
         self.io.read_until(b'\n', buf).await?;
-        if buf.last().map(|b| *b != b'\n').unwrap_or(true) {
+        if buf.last().copied() != Some(b'\n') {
             return Err(ErrorKind::UnexpectedEof.into());
         }
         Ok(())
