@@ -16,7 +16,9 @@ where
 {
     /// Creates the ASCII protocol on a stream.
     pub fn new(io: S) -> Self {
-        Self { io: BufReader::new(io) }
+        Self {
+            io: BufReader::new(io),
+        }
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
@@ -28,7 +30,7 @@ where
 
         // Read response header
         let mut buf = vec![];
-        self.io.read_until(b'\n', &mut buf).await?;
+        self.read_line(&mut buf).await?;
         let header = String::from_utf8(buf).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
@@ -39,7 +41,9 @@ where
         }
 
         // VALUE <key> <flags> <bytes> [<cas unique>]\r\n
-        let length: usize = header.split(' ').nth(3)
+        let length: usize = header
+            .split(' ')
+            .nth(3)
             .and_then(|len| len.trim_end().parse().ok())
             .ok_or(ErrorKind::InvalidData)?;
 
@@ -49,8 +53,8 @@ where
 
         // Read the trailing header
         let mut buf = vec![];
-        self.io.read_until(b'\n', &mut buf).await?; // \r\n
-        self.io.read_until(b'\n', &mut buf).await?; // END\r\n
+        self.read_line(&mut buf).await?; // \r\n
+        self.read_line(&mut buf).await?; // END\r\n
 
         Ok(buffer)
     }
@@ -69,10 +73,10 @@ where
         let writer = self.io.get_mut();
         writer.write_all("get".as_bytes()).await?;
         for k in keys {
-            writer.write(b" ").await?;
+            writer.write_all(b" ").await?;
             writer.write_all(k.as_ref()).await?;
         }
-        writer.write(b"\r\n").await?;
+        writer.write_all(b"\r\n").await?;
         writer.flush().await?;
 
         // Read response header
@@ -80,12 +84,11 @@ where
     }
 
     async fn read_many_values(&mut self) -> Result<HashMap<String, Vec<u8>>, Error> {
-        let mut reader = BufReader::new(&mut self.io);
         let mut map = HashMap::new();
         loop {
             let header = {
                 let mut buf = vec![];
-                reader.read_until(b'\n', &mut buf).await?;
+                self.read_line(&mut buf).await?;
                 String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
             };
             let mut parts = header.split(' ');
@@ -99,9 +102,9 @@ where
                             .parse()
                             .map_err(|_| Error::from(ErrorKind::InvalidData))?;
                         let mut buffer: Vec<u8> = vec![0; size];
-                        reader.read_exact(&mut buffer).await?;
+                        self.io.read_exact(&mut buffer).await?;
                         let mut crlf = vec![0; 2];
-                        reader.read_exact(&mut crlf).await?;
+                        self.io.read_exact(&mut crlf).await?;
 
                         map.insert(key.to_owned(), buffer);
                     } else {
@@ -150,10 +153,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let header = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -196,10 +198,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -216,10 +217,9 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let mut reader = BufReader::new(&mut self.io);
         let response = {
             let mut buf = vec![];
-            reader.read_until(b'\n', &mut buf).await?;
+            self.read_line(&mut buf).await?;
             String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
@@ -228,6 +228,14 @@ where
         } else {
             Err(Error::new(ErrorKind::Other, response))
         }
+    }
+
+    async fn read_line(&mut self, buf: &mut Vec<u8>) -> Result<(), Error> {
+        self.io.read_until(b'\n', buf).await?;
+        if buf.last().map(|b| *b != b'\n').unwrap_or(true) {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        Ok(())
     }
 }
 
@@ -330,6 +338,18 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_get_eof_error() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"EN");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(
+            block_on(ascii.get(&"foo")).unwrap_err().kind(),
+            ErrorKind::UnexpectedEof
+        );
+        assert_eq!(cache.w.get_ref(), b"get foo\r\n");
+    }
+
+    #[test]
     fn test_ascii_get_one() {
         let mut cache = Cache::new();
         cache
@@ -408,6 +428,35 @@ mod tests {
             &format!("set {} 0 {} {} noreply\r\n{}\r\n", key, ttl, val.len(), val)
                 .as_bytes()
                 .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_add_new_key() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"STORED\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.add(&key, val.as_bytes(), ttl)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("add {} 0 {} {}\r\n{}\r\n", key, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_add_duplicate() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"NOT_STORED\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(
+            block_on(ascii.add(&key, val.as_bytes(), ttl))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::AlreadyExists
         );
     }
 
