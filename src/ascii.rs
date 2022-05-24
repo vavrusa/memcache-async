@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
 
+/// Memcache ASCII protocol implementation.
 pub struct Protocol<S> {
     io: BufReader<S>,
+    buf: Vec<u8>,
 }
 
 impl<S> Protocol<S>
@@ -18,20 +20,22 @@ where
     pub fn new(io: S) -> Self {
         Self {
             io: BufReader::new(io),
+            buf: Vec::new(),
         }
     }
 
     /// Returns the value for given key as bytes. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
-    pub async fn get<K: Display>(&mut self, key: K) -> Result<Vec<u8>, Error> {
+    pub async fn get<K: AsRef<[u8]>>(&mut self, key: K) -> Result<Vec<u8>, Error> {
         // Send command
-        let header = format!("get {}\r\n", key);
-        self.io.get_mut().write_all(header.as_bytes()).await?;
-        self.io.get_mut().flush().await?;
+        let writer = self.io.get_mut();
+        writer.write_all(b"get ").await?;
+        writer.write_all(key.as_ref()).await?;
+        writer.write_all(b"\r\n").await?;
+        writer.flush().await?;
 
         // Read response header
-        let mut buf = vec![];
-        self.read_line(&mut buf).await?;
-        let header = String::from_utf8(buf).map_err(|_| ErrorKind::InvalidData)?;
+        let header = self.read_line().await?;
+        let header = std::str::from_utf8(header).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
         if header.contains("ERROR") {
@@ -52,9 +56,8 @@ where
         self.io.read_exact(&mut buffer).await?;
 
         // Read the trailing header
-        let mut buf = vec![];
-        self.read_line(&mut buf).await?; // \r\n
-        self.read_line(&mut buf).await?; // END\r\n
+        self.read_line().await?; // \r\n
+        self.read_line().await?; // END\r\n
 
         Ok(buffer)
     }
@@ -87,10 +90,10 @@ where
         let mut map = HashMap::new();
         loop {
             let header = {
-                let mut buf = vec![];
-                self.read_line(&mut buf).await?;
-                String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
-            };
+                let buf = self.read_line().await?;
+                std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+            }
+            .to_string();
             let mut parts = header.split(' ');
             match parts.next() {
                 Some("VALUE") => {
@@ -154,9 +157,8 @@ where
 
         // Read response header
         let header = {
-            let mut buf = vec![];
-            self.read_line(&mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
         // Check response header and parse value length
@@ -198,16 +200,15 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let response = {
-            let mut buf = vec![];
-            self.read_line(&mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
-        if !response.starts_with("VERSION") {
-            return Err(Error::new(ErrorKind::Other, response));
+        if !header.starts_with("VERSION") {
+            return Err(Error::new(ErrorKind::Other, header));
         }
-        let version = response.trim_start_matches("VERSION ").trim_end();
+        let version = header.trim_start_matches("VERSION ").trim_end();
         Ok(version.to_string())
     }
 
@@ -217,25 +218,26 @@ where
         self.io.flush().await?;
 
         // Read response header
-        let response = {
-            let mut buf = vec![];
-            self.read_line(&mut buf).await?;
-            String::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
         };
 
-        if response == "OK\r\n" {
+        if header == "OK\r\n" {
             Ok(())
         } else {
-            Err(Error::new(ErrorKind::Other, response))
+            Err(Error::new(ErrorKind::Other, header))
         }
     }
 
-    async fn read_line(&mut self, buf: &mut Vec<u8>) -> Result<(), Error> {
-        self.io.read_until(b'\n', buf).await?;
+    async fn read_line(&mut self) -> Result<&[u8], Error> {
+        let Self { io, buf } = self;
+        buf.clear();
+        io.read_until(b'\n', buf).await?;
         if buf.last().copied() != Some(b'\n') {
             return Err(ErrorKind::UnexpectedEof.into());
         }
-        Ok(())
+        Ok(&buf[..])
     }
 }
 
