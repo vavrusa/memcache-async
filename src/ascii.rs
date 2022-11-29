@@ -28,9 +28,9 @@ where
     pub async fn get<K: AsRef<[u8]>>(&mut self, key: K) -> Result<Vec<u8>, Error> {
         // Send command
         let writer = self.io.get_mut();
-        writer.write_all(b"get ").await?;
-        writer.write_all(key.as_ref()).await?;
-        writer.write_all(b"\r\n").await?;
+        writer
+            .write_all(&[b"get ", key.as_ref(), b"\r\n"].concat())
+            .await?;
         writer.flush().await?;
 
         // Read response header
