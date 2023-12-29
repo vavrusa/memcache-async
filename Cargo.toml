@@ -1,6 +1,6 @@
 [package]
 name = "memcache-async"
-version = "0.6.4"
+version = "0.7.0"
 authors = ["Marek Vavruša <marek@vavrusa.com>"]
 edition = "2018"
 readme = "README.md"
