@@ -13,3 +13,7 @@ homepage = "https://github.com/vavrusa/memcache-async"
 
 [dependencies]
 futures = { version = "0.3" }
+
+
+[dev-dependencies]
+tokio = {version = "1.20.0", features = ["full"]}
