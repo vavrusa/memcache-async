@@ -186,6 +186,16 @@ where
         Ok(())
     }
 
+    /// Append bytes to the value in memcached and don't wait for response.
+    pub async fn append<K: Display>(&mut self, key: K, val: &[u8]) -> Result<(), Error> {
+        let header = format!("append {} 0 0 {} noreply\r\n", key, val.len());
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
+        Ok(())
+    }
+
     /// Delete a key and don't wait for response.
     pub async fn delete<K: Display>(&mut self, key: K) -> Result<(), Error> {
         let header = format!("delete {} noreply\r\n", key);
