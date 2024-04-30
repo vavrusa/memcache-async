@@ -356,6 +356,64 @@ where
             Err(Error::new(ErrorKind::Other, header))
         }
     }
+
+    /// Append bytes to the value in memcached, and creates the key if it is missing instead of failing compared to simple append
+    pub async fn append_or_vivify<K: Display>(
+        &mut self,
+        key: K,
+        val: &[u8],
+        ttl: u32,
+    ) -> Result<(), Error> {
+        /* From memcached docs:
+         * - M(token): mode switch to change behavior to add, replace, append, prepend. Takes a single character for the mode.
+         *       A: "append" command. If item exists, append the new value to its data.
+         * ----
+         * The "cas" command is supplanted by specifying the cas value with the 'C' flag.
+         * Append and Prepend modes will also respect a supplied cas value.
+         *
+         * - N(token): if in append mode, autovivify on miss with supplied TTL
+         *
+         * If N is supplied, and append reaches a miss, it will
+         * create a new item seeded with the data from the append command.
+         */
+        let header = format!("ms {} {} MA N{}\r\n", key, val.len(), ttl);
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
+
+        // Read response header
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        };
+
+        /* From memcached docs:
+         *    After sending the command line and the data block the client awaits
+         *    the reply, which is of the format:
+         *
+         *    <CD> <flags>*\r\n
+         *
+         *    Where CD is one of:
+         *
+         *    - "HD" (STORED), to indicate success.
+         *
+         *    - "NS" (NOT_STORED), to indicate the data was not stored, but not
+         *    because of an error.
+         *
+         *    - "EX" (EXISTS), to indicate that the item you are trying to store with
+         *    CAS semantics has been modified since you last fetched it.
+         *
+         *    - "NF" (NOT_FOUND), to indicate that the item you are trying to store
+         *    with CAS semantics did not exist.
+         */
+
+        if header.starts_with("HD") {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::Other, header))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -643,6 +701,21 @@ mod tests {
             )
             .as_bytes()
             .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_append_or_vivify() {
+        let (key, val, ttl) = ("foo", "bar", 5);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"HD\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.append_or_vivify(&key, val.as_bytes(), ttl)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("ms {} {} MA N{}\r\n{}\r\n", key, val.len(), ttl, val)
+                .as_bytes()
+                .to_vec()
         );
     }
 }
