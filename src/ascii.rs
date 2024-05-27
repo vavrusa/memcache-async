@@ -28,9 +28,9 @@ where
     pub async fn get<K: AsRef<[u8]>>(&mut self, key: K) -> Result<Vec<u8>, Error> {
         // Send command
         let writer = self.io.get_mut();
-        writer.write_all(b"get ").await?;
-        writer.write_all(key.as_ref()).await?;
-        writer.write_all(b"\r\n").await?;
+        writer
+            .write_all(&[b"get ", key.as_ref(), b"\r\n"].concat())
+            .await?;
         writer.flush().await?;
 
         // Read response header
@@ -227,6 +227,39 @@ where
             Ok(())
         } else {
             Err(Error::new(ErrorKind::Other, header))
+        }
+    }
+
+    /// Increment a specific integer stored with a key by a given value. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
+    /// Otherwise the new value is returned
+    pub async fn increment<K: AsRef<[u8]>>(&mut self, key: K, amount: u64) -> Result<u64, Error> {
+        // Send command
+        let writer = self.io.get_mut();
+        let buf = &[
+            b"incr ",
+            key.as_ref(),
+            b" ",
+            amount.to_string().as_bytes(),
+            b"\r\n",
+        ]
+        .concat();
+        writer.write_all(buf).await?;
+        writer.flush().await?;
+
+        // Read response header
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        };
+
+        if header == "NOT_FOUND\r\n" {
+            Err(ErrorKind::NotFound.into())
+        } else {
+            let value = header
+                .trim_end()
+                .parse::<u64>()
+                .map_err(|_| Error::from(ErrorKind::InvalidData))?;
+            Ok(value)
         }
     }
 
@@ -478,5 +511,14 @@ mod tests {
         let mut ascii = super::Protocol::new(&mut cache);
         assert!(block_on(ascii.flush()).is_ok());
         assert_eq!(cache.w.get_ref(), b"flush_all\r\n");
+    }
+
+    #[test]
+    fn test_ascii_increment() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"2\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.increment("foo", 1)).unwrap(), 2);
+        assert_eq!(cache.w.get_ref(), b"incr foo 1\r\n");
     }
 }
