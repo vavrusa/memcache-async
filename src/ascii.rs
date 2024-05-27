@@ -282,11 +282,8 @@ where
 #[cfg(test)]
 mod tests {
     use futures::executor::block_on;
-    #[cfg(feature = "with-futures")]
     use futures::io::{AsyncRead, AsyncWrite};
 
-    #[cfg(feature = "with-tokio")]
-    use tokio::io::{AsyncRead, AsyncWrite};
 
     use std::io::{Cursor, Error, ErrorKind, Read, Write};
     use std::pin::Pin;
@@ -329,15 +326,7 @@ mod tests {
             Poll::Ready(self.get_mut().w.flush())
         }
 
-        #[cfg(feature = "with-futures")]
         fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Result<(), Error>> {
-            Poll::Ready(Ok(()))
-        }
-        #[cfg(feature = "with-tokio")]
-        fn poll_shutdown(
-            self: Pin<&mut Self>,
-            _cx: &mut Context<'_>,
-        ) -> Poll<Result<(), std::io::Error>> {
             Poll::Ready(Ok(()))
         }
     }
