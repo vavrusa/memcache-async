@@ -1,7 +1,12 @@
 //! This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
 //! ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
+#[cfg(feature = "with-futures")]
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
+#[cfg(feature = "with-tokio")]
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
@@ -420,6 +425,8 @@ where
 mod tests {
     use futures::executor::block_on;
     use futures::io::{AsyncRead, AsyncWrite};
+
+
     use std::io::{Cursor, Error, ErrorKind, Read, Write};
     use std::pin::Pin;
     use std::task::{Context, Poll};
