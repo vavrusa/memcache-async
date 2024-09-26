@@ -85,16 +85,17 @@ where
             return Ok(HashMap::new());
         }
 
+        let mut bf = Vec::new();
+        bf.extend(b"get");
+        for k in keys {
+            bf.extend(b" ");
+            bf.extend(k.as_ref());
+        }
+        bf.extend(b"\r\n");
         // Send command
         let writer = self.io.get_mut();
-        writer.write_all("get".as_bytes()).await?;
-        for k in keys {
-            writer.write_all(b" ").await?;
-            writer.write_all(k.as_ref()).await?;
-        }
-        writer.write_all(b"\r\n").await?;
+        writer.write_all(&bf).await?;
         writer.flush().await?;
-
         // Read response header
         self.read_many_values().await
     }
@@ -425,7 +426,6 @@ where
 mod tests {
     use futures::executor::block_on;
     use futures::io::{AsyncRead, AsyncWrite};
-
 
     use std::io::{Cursor, Error, ErrorKind, Read, Write};
     use std::pin::Pin;
