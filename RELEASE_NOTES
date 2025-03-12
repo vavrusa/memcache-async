@@ -1,0 +1,4 @@
+0.8.0
+- 2024-04-30 Add support for meta set command with append and autovivify flags
+- 2024-03-07 Add support for single gets and cas commands
+- 2024-02-28 Add support for append command
