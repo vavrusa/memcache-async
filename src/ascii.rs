@@ -48,7 +48,10 @@ where
         let header = std::str::from_utf8(header).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
-        if header.contains("ERROR") {
+        if header.starts_with("ERROR")
+            || header.starts_with("CLIENT_ERROR")
+            || header.starts_with("SERVER_ERROR")
+        {
             return Err(Error::new(ErrorKind::Other, header));
         } else if header.starts_with("END") {
             return Err(ErrorKind::NotFound.into());
@@ -426,7 +429,6 @@ mod tests {
     use futures::executor::block_on;
     use futures::io::{AsyncRead, AsyncWrite};
 
-
     use std::io::{Cursor, Error, ErrorKind, Read, Write};
     use std::pin::Pin;
     use std::task::{Context, Poll};
@@ -724,5 +726,49 @@ mod tests {
                 .as_bytes()
                 .to_vec()
         );
+    }
+
+    #[test]
+    fn test_response_starting_with_error() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"ERROR\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_response_containing_error_string() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE contains_ERROR 0 3\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
+    }
+
+    #[test]
+    fn test_client_error_response() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"CLIENT_ERROR bad command\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_server_error_response() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"SERVER_ERROR out of memory\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
     }
 }
