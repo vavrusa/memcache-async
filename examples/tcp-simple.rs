@@ -1,5 +1,4 @@
 #[cfg(feature = "with-futures")]
-
 use futures::executor::block_on;
 use futures::io::AllowStdIo;
 use memcache_async::ascii::Protocol;

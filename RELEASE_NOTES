@@ -1,3 +1,6 @@
+0.9.0
+- Only match ERROR at start of response line, not within content @MatthewCline-git
+- feat: enabling tokio::io::TcpStream implementing AsyncRead + AsyncWrite as additional feature @vaikzs
 0.8.0
 - 2024-04-30 Add support for meta set command with append and autovivify flags
 - 2024-03-07 Add support for single gets and cas commands

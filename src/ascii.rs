@@ -322,7 +322,6 @@ where
         }
     }
 
-
     async fn read_line(&mut self) -> Result<&[u8], Error> {
         let Self { io, buf } = self;
         buf.clear();
