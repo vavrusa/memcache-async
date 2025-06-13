@@ -158,14 +158,16 @@ where
     }
 
     /// Add a key. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
+    /// default flagging is 0
     pub async fn add<K: Display>(
         &mut self,
         key: K,
         val: &[u8],
         expiration: u32,
+        flags: Option<u32>
     ) -> Result<(), Error> {
         // Send command
-        let header = format!("add {} 0 {} {}\r\n", key, expiration, val.len());
+        let header = format!("add {} {} {} {}\r\n", key, flags.unwrap_or(0), expiration, val.len());
         self.io.write_all(header.as_bytes()).await?;
         self.io.write_all(val).await?;
         self.io.write_all(b"\r\n").await?;
@@ -188,13 +190,16 @@ where
     }
 
     /// Set key to given value and don't wait for response.
+    /// default flagging is 0
     pub async fn set<K: Display>(
         &mut self,
         key: K,
         val: &[u8],
         expiration: u32,
+        flags: Option<u32>,
     ) -> Result<(), Error> {
-        let header = format!("set {} 0 {} {} noreply\r\n", key, expiration, val.len());
+        
+        let header = format!("set {} {} {} {} noreply\r\n", key, flags.unwrap_or(0), expiration, val.len());
         self.io.write_all(header.as_bytes()).await?;
         self.io.write_all(val).await?;
         self.io.write_all(b"\r\n").await?;
@@ -203,6 +208,7 @@ where
     }
 
     /// Append bytes to the value in memcached and don't wait for response.
+    /// memcache server ignores flags and exptime
     pub async fn append<K: Display>(&mut self, key: K, val: &[u8]) -> Result<(), Error> {
         let header = format!("append {} 0 0 {} noreply\r\n", key, val.len());
         self.io.write_all(header.as_bytes()).await?;
@@ -641,10 +647,24 @@ mod tests {
         let (key, val, ttl) = ("foo", "bar", 5);
         let mut cache = Cache::new();
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.set(&key, val.as_bytes(), ttl)).unwrap();
+        block_on(ascii.set(&key, val.as_bytes(), ttl, None)).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("set {} 0 {} {} noreply\r\n{}\r\n", key, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_set_with_flags() {
+        let (key, val, ttl, flags) = ("foo", "bar", 5, 1);
+        let mut cache = Cache::new();
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.set(&key, val.as_bytes(), ttl, Some(1))).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("set {} {} {} {} noreply\r\n{}\r\n", key, flags, ttl, val.len(), val)
                 .as_bytes()
                 .to_vec()
         );
@@ -656,7 +676,7 @@ mod tests {
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"STORED\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.add(&key, val.as_bytes(), ttl)).unwrap();
+        block_on(ascii.add(&key, val.as_bytes(), ttl, None)).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("add {} 0 {} {}\r\n{}\r\n", key, ttl, val.len(), val)
@@ -666,13 +686,29 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_add_new_key_with_flags() {
+        let (key, val, ttl, flags) = ("foo", "bar", 5, 1);
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"STORED\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.add(&key, val.as_bytes(), ttl, Some(1))).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("add {} {} {} {}\r\n{}\r\n", key, flags, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+
+    #[test]
     fn test_ascii_add_duplicate() {
         let (key, val, ttl) = ("foo", "bar", 5);
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"NOT_STORED\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(
-            block_on(ascii.add(&key, val.as_bytes(), ttl))
+            block_on(ascii.add(&key, val.as_bytes(), ttl, None))
                 .unwrap_err()
                 .kind(),
             ErrorKind::AlreadyExists

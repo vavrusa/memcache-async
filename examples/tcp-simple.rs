@@ -24,7 +24,7 @@ fn main() {
         // romio or tokio instead.
         let mut cache = Protocol::new(AllowStdIo::new(stream));
         cache
-            .set(&key, val.as_bytes(), 0)
+            .set(&key, val.as_bytes(), 0, None)
             .await
             .expect("Failed to set key");
 
