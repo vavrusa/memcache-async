@@ -289,6 +289,26 @@ where
         }
     }
 
+    /// Increment a specific integer stored with a key by a given value without waiting for a response.
+    pub async fn increment_noreply<K: AsRef<[u8]>>(
+        &mut self,
+        key: K,
+        amount: u64,
+    ) -> Result<(), Error> {
+        let writer = self.io.get_mut();
+        let buf = &[
+            b"incr ",
+            key.as_ref(),
+            b" ",
+            amount.to_string().as_bytes(),
+            b" noreply\r\n",
+        ]
+        .concat();
+        writer.write_all(buf).await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
     /// Decrement a specific integer stored with a key by a given value. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
     /// Otherwise the new value is returned
     pub async fn decrement<K: AsRef<[u8]>>(&mut self, key: K, amount: u64) -> Result<u64, Error> {
@@ -645,6 +665,20 @@ mod tests {
         assert_eq!(
             cache.w.get_ref(),
             &format!("set {} 0 {} {} noreply\r\n{}\r\n", key, ttl, val.len(), val)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+    #[test]
+    fn test_ascii_increment_noreply() {
+        let (key, amount) = ("foo", 5);
+        let mut cache = Cache::new();
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.increment_noreply(key.as_bytes(), amount)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("incr {} {} noreply\r\n", key, amount)
                 .as_bytes()
                 .to_vec()
         );
