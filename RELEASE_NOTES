@@ -1,3 +1,5 @@
+0.10.0
+- Support noreply for incr
 0.9.0
 - Only match ERROR at start of response line, not within content @MatthewCline-git
 - feat: enabling tokio::io::TcpStream implementing AsyncRead + AsyncWrite as additional feature @vaikzs
