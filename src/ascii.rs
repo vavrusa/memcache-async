@@ -11,6 +11,13 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
 
+/// Check if a response header indicates an error from memcached.
+fn is_memcached_error(header: &str) -> bool {
+    header.starts_with("ERROR")
+        || header.starts_with("CLIENT_ERROR")
+        || header.starts_with("SERVER_ERROR")
+}
+
 /// Memcache ASCII protocol implementation.
 pub struct Protocol<S> {
     io: BufReader<S>,
@@ -48,10 +55,7 @@ where
         let header = std::str::from_utf8(header).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
-        if header.starts_with("ERROR")
-            || header.starts_with("CLIENT_ERROR")
-            || header.starts_with("SERVER_ERROR")
-        {
+        if is_memcached_error(header) {
             return Err(Error::new(ErrorKind::Other, header));
         } else if header.starts_with("END") {
             return Err(ErrorKind::NotFound.into());
@@ -178,7 +182,7 @@ where
         };
 
         // Check response header and parse value length
-        if header.contains("ERROR") {
+        if is_memcached_error(header) {
             return Err(Error::new(ErrorKind::Other, header));
         } else if header.starts_with("NOT_STORED") {
             return Err(ErrorKind::AlreadyExists.into());
@@ -257,7 +261,9 @@ where
     }
 
     /// Increment a specific integer stored with a key by a given value. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
-    /// Otherwise the new value is returned
+    /// Otherwise the new value is returned.
+    ///
+    /// Note: If the key exists but contains a non-numeric value, memcached will return a CLIENT_ERROR.
     pub async fn increment<K: AsRef<[u8]>>(&mut self, key: K, amount: u64) -> Result<u64, Error> {
         // Send command
         let writer = self.io.get_mut();
@@ -280,6 +286,8 @@ where
 
         if header == "NOT_FOUND\r\n" {
             Err(ErrorKind::NotFound.into())
+        } else if is_memcached_error(header) {
+            Err(Error::new(ErrorKind::Other, header))
         } else {
             let value = header
                 .trim_end()
@@ -310,7 +318,9 @@ where
     }
 
     /// Decrement a specific integer stored with a key by a given value. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
-    /// Otherwise the new value is returned
+    /// Otherwise the new value is returned.
+    ///
+    /// Note: If the key exists but contains a non-numeric value, memcached will return a CLIENT_ERROR.
     pub async fn decrement<K: AsRef<[u8]>>(&mut self, key: K, amount: u64) -> Result<u64, Error> {
         // Send command
         let writer = self.io.get_mut();
@@ -333,6 +343,8 @@ where
 
         if header == "NOT_FOUND\r\n" {
             Err(ErrorKind::NotFound.into())
+        } else if is_memcached_error(header) {
+            Err(Error::new(ErrorKind::Other, header))
         } else {
             let value = header
                 .trim_end()
@@ -747,6 +759,76 @@ mod tests {
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(block_on(ascii.decrement("foo", 1)).unwrap(), 0);
         assert_eq!(cache.w.get_ref(), b"decr foo 1\r\n");
+    }
+
+    #[test]
+    fn test_ascii_increment_not_found() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"NOT_FOUND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.increment("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_ascii_increment_client_error() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"CLIENT_ERROR cannot increment or decrement non-numeric value\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.increment("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+        assert!(err
+            .to_string()
+            .contains("cannot increment or decrement non-numeric value"));
+    }
+
+    #[test]
+    fn test_ascii_increment_server_error() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"SERVER_ERROR out of memory\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.increment("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+        assert!(err.to_string().contains("out of memory"));
+    }
+
+    #[test]
+    fn test_ascii_increment_error() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"ERROR\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.increment("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_ascii_decrement_not_found() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"NOT_FOUND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.decrement("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_ascii_decrement_client_error() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"CLIENT_ERROR cannot increment or decrement non-numeric value\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.decrement("foo", 1)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+        assert!(err
+            .to_string()
+            .contains("cannot increment or decrement non-numeric value"));
     }
 
     #[test]
