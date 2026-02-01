@@ -1,7 +1,12 @@
 //! This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
 //! ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
+#[cfg(feature = "with-futures")]
 use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
+#[cfg(feature = "with-tokio")]
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use std::marker::Unpin;
@@ -43,7 +48,10 @@ where
         let header = std::str::from_utf8(header).map_err(|_| ErrorKind::InvalidData)?;
 
         // Check response header and parse value length
-        if header.contains("ERROR") {
+        if header.starts_with("ERROR")
+            || header.starts_with("CLIENT_ERROR")
+            || header.starts_with("SERVER_ERROR")
+        {
             return Err(Error::new(ErrorKind::Other, header));
         } else if header.starts_with("END") {
             return Err(ErrorKind::NotFound.into());
@@ -332,6 +340,59 @@ where
         }
     }
 
+    /// Increment a specific integer stored with a key by a given value without waiting for a response.
+    pub async fn increment_noreply<K: AsRef<[u8]>>(
+        &mut self,
+        key: K,
+        amount: u64,
+    ) -> Result<(), Error> {
+        let writer = self.io.get_mut();
+        let buf = &[
+            b"incr ",
+            key.as_ref(),
+            b" ",
+            amount.to_string().as_bytes(),
+            b" noreply\r\n",
+        ]
+        .concat();
+        writer.write_all(buf).await?;
+        writer.flush().await?;
+        Ok(())
+    }
+
+    /// Decrement a specific integer stored with a key by a given value. If the value doesn't exist, [`ErrorKind::NotFound`] is returned.
+    /// Otherwise the new value is returned
+    pub async fn decrement<K: AsRef<[u8]>>(&mut self, key: K, amount: u64) -> Result<u64, Error> {
+        // Send command
+        let writer = self.io.get_mut();
+        let buf = &[
+            b"decr ",
+            key.as_ref(),
+            b" ",
+            amount.to_string().as_bytes(),
+            b"\r\n",
+        ]
+        .concat();
+        writer.write_all(buf).await?;
+        writer.flush().await?;
+
+        // Read response header
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        };
+
+        if header == "NOT_FOUND\r\n" {
+            Err(ErrorKind::NotFound.into())
+        } else {
+            let value = header
+                .trim_end()
+                .parse::<u64>()
+                .map_err(|_| Error::from(ErrorKind::InvalidData))?;
+            Ok(value)
+        }
+    }
+
     async fn read_line(&mut self) -> Result<&[u8], Error> {
         let Self { io, buf } = self;
         buf.clear();
@@ -471,6 +532,7 @@ where
 mod tests {
     use futures::executor::block_on;
     use futures::io::{AsyncRead, AsyncWrite};
+
     use std::io::{Cursor, Error, ErrorKind, Read, Write};
     use std::pin::Pin;
     use std::task::{Context, Poll};
@@ -660,19 +722,32 @@ mod tests {
     }
 
     #[test]
-    fn test_ascii_set_with_flags() {
+    fn test_ascii_increment_noreply() {
+        let (key, amount) = ("foo", 5);
+        let mut cache = Cache::new();
+        let mut ascii = super::Protocol::new(&mut cache);
+        block_on(ascii.increment_noreply(key.as_bytes(), amount)).unwrap();
+        assert_eq!(
+            cache.w.get_ref(),
+            &format!("incr {} {} noreply\r\n", key, amount)
+                .as_bytes()
+                .to_vec()
+        );
+    }
+
+    #[test]
+      fn test_ascii_set_with_flags() {
         let (key, val, ttl, flags) = ("foo", "bar", 5, 1);
         let mut cache = Cache::new();
         let mut ascii = super::Protocol::new(&mut cache);
         block_on(ascii.set_with_flags(&key, val.as_bytes(), ttl, Some(1))).unwrap();
-        assert_eq!(
+          assert_eq!(
             cache.w.get_ref(),
             &format!("set {} {} {} {} noreply\r\n{}\r\n", key, flags, ttl, val.len(), val)
                 .as_bytes()
                 .to_vec()
         );
     }
-
     #[test]
     fn test_ascii_add_new_key() {
         let (key, val, ttl) = ("foo", "bar", 5);
@@ -746,6 +821,15 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_decrement() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"0\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.decrement("foo", 1)).unwrap(), 0);
+        assert_eq!(cache.w.get_ref(), b"decr foo 1\r\n");
+    }
+
+    #[test]
     fn test_ascii_gets_cas() {
         let mut cache = Cache::new();
         cache
@@ -798,5 +882,49 @@ mod tests {
                 .as_bytes()
                 .to_vec()
         );
+    }
+
+    #[test]
+    fn test_response_starting_with_error() {
+        let mut cache = Cache::new();
+        cache.r.get_mut().extend_from_slice(b"ERROR\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_response_containing_error_string() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"VALUE contains_ERROR 0 3\r\nbar\r\nEND\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        assert_eq!(block_on(ascii.get(&"foo")).unwrap(), b"bar");
+    }
+
+    #[test]
+    fn test_client_error_response() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"CLIENT_ERROR bad command\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_server_error_response() {
+        let mut cache = Cache::new();
+        cache
+            .r
+            .get_mut()
+            .extend_from_slice(b"SERVER_ERROR out of memory\r\n");
+        let mut ascii = super::Protocol::new(&mut cache);
+        let err = block_on(ascii.get(&"foo")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Other);
     }
 }
