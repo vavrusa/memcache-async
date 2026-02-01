@@ -150,13 +150,44 @@ where
     }
 
     /// Add a key. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
-    /// default flagging is 0
     pub async fn add<K: Display>(
         &mut self,
         key: K,
         val: &[u8],
         expiration: u32,
-        flags: Option<u32>
+    ) -> Result<(), Error> {
+        // Send command
+        let header = format!("add {} 0 {} {}\r\n", key, expiration, val.len());
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
+
+        // Read response header
+        let header = {
+            let buf = self.read_line().await?;
+            std::str::from_utf8(buf).map_err(|_| Error::from(ErrorKind::InvalidData))?
+        };
+
+        // Check response header and parse value length
+        if header.contains("ERROR") {
+            return Err(Error::new(ErrorKind::Other, header));
+        } else if header.starts_with("NOT_STORED") {
+            return Err(ErrorKind::AlreadyExists.into());
+        }
+
+        Ok(())
+    }
+
+    /// Add a key with explicit flags. If the value exists, [`ErrorKind::AlreadyExists`] is returned.
+    /// flag is expected and no default is used
+    /// default flags to 0
+    pub async fn add_with_flags<K: Display>(
+        &mut self,
+        key: K,
+        val: &[u8],
+        expiration: u32,
+        flags: Option<u32>,
     ) -> Result<(), Error> {
         // Send command
         let header = format!("add {} {} {} {}\r\n", key, flags.unwrap_or(0), expiration, val.len());
@@ -181,16 +212,30 @@ where
         Ok(())
     }
 
+
     /// Set key to given value and don't wait for response.
-    /// default flagging is 0
     pub async fn set<K: Display>(
+        &mut self,
+        key: K,
+        val: &[u8],
+        expiration: u32,
+    ) -> Result<(), Error> {
+        let header = format!("set {} 0 {} {} noreply\r\n", key, expiration, val.len());
+        self.io.write_all(header.as_bytes()).await?;
+        self.io.write_all(val).await?;
+        self.io.write_all(b"\r\n").await?;
+        self.io.flush().await?;
+        Ok(())
+    }
+
+    /// Set key to given value with explicit flags and don't wait for response.
+    pub async fn set_with_flags<K: Display>(
         &mut self,
         key: K,
         val: &[u8],
         expiration: u32,
         flags: Option<u32>,
     ) -> Result<(), Error> {
-        
         let header = format!("set {} {} {} {} noreply\r\n", key, flags.unwrap_or(0), expiration, val.len());
         self.io.write_all(header.as_bytes()).await?;
         self.io.write_all(val).await?;
@@ -605,7 +650,7 @@ mod tests {
         let (key, val, ttl) = ("foo", "bar", 5);
         let mut cache = Cache::new();
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.set(&key, val.as_bytes(), ttl, None)).unwrap();
+        block_on(ascii.set(&key, val.as_bytes(), ttl)).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("set {} 0 {} {} noreply\r\n{}\r\n", key, ttl, val.len(), val)
@@ -619,7 +664,7 @@ mod tests {
         let (key, val, ttl, flags) = ("foo", "bar", 5, 1);
         let mut cache = Cache::new();
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.set(&key, val.as_bytes(), ttl, Some(1))).unwrap();
+        block_on(ascii.set_with_flags(&key, val.as_bytes(), ttl, Some(1))).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("set {} {} {} {} noreply\r\n{}\r\n", key, flags, ttl, val.len(), val)
@@ -634,7 +679,7 @@ mod tests {
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"STORED\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.add(&key, val.as_bytes(), ttl, None)).unwrap();
+        block_on(ascii.add(&key, val.as_bytes(), ttl)).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("add {} 0 {} {}\r\n{}\r\n", key, ttl, val.len(), val)
@@ -649,7 +694,7 @@ mod tests {
         let mut cache = Cache::new();
         cache.r.get_mut().extend_from_slice(b"STORED\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
-        block_on(ascii.add(&key, val.as_bytes(), ttl, Some(1))).unwrap();
+        block_on(ascii.add_with_flags(&key, val.as_bytes(), ttl, Some(1))).unwrap();
         assert_eq!(
             cache.w.get_ref(),
             &format!("add {} {} {} {}\r\n{}\r\n", key, flags, ttl, val.len(), val)
@@ -666,7 +711,7 @@ mod tests {
         cache.r.get_mut().extend_from_slice(b"NOT_STORED\r\n");
         let mut ascii = super::Protocol::new(&mut cache);
         assert_eq!(
-            block_on(ascii.add(&key, val.as_bytes(), ttl, None))
+            block_on(ascii.add(&key, val.as_bytes(), ttl))
                 .unwrap_err()
                 .kind(),
             ErrorKind::AlreadyExists
