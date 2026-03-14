@@ -1,11 +1,22 @@
 //! This is a simplified implementation of [rust-memcache](https://github.com/aisk/rust-memcache)
 //! ported for AsyncRead + AsyncWrite.
 use core::fmt::Display;
-#[cfg(feature = "with-futures")]
-use futures::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
-#[cfg(feature = "with-tokio")]
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use cfg_if::cfg_if;
+
+cfg_if! {
+    // The order here matters. If both features are enabled,
+    // this one will be chosen, avoiding a conflict.
+    if #[cfg(feature = "with-tokio")] {
+        use tokio::io as async_io;
+    } else if #[cfg(feature = "with-futures")] {
+        use futures::io as async_io;
+    } else {
+        compile_error!("An async I/O feature ('with-tokio' or 'with-futures') must be enabled.");
+    }
+}
+
+use async_io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
